@@ -200,5 +200,109 @@ def CompareFlows(n):
 
 
 
+#### Operator Scaling Code 
+
+#density matrix: mn x mn psd matrix
+#target marginals: [m vector, n vector] (diagonals of target marginals)
+#only works for reals for now
+#only works for diagonal target marginals for now
+#returns the pair of scalings and whether the desired precision was reached
+#TODO: complex, non-diagonal, also output value of dual optimization function these are optimizing
+
+def Sinkhorn(density_matrix, target_marginals, desired_precision=.001, max_iterations = 1000):
+    left_target = target_marginals[0]
+    right_target = target_marginals[1]
+    left_dimension = np.shape(left_target)[0]
+    right_dimension = np.shape(right_target)[0]
+    converged = True
+    error = math.inf
+    iteration = 0
+    current_scalings = [np.eye(left_dimension), np.eye(right_dimension)]
+    while (error > desired_precision) and (iteration < max_iterations):
+      print("iteration: ", iteration, "error: ", error)
+      iteration+=1
+      current_scalings,error = Sinkhorn_step(density_matrix, current_scalings, target_marginals)
+    return current_scalings, error<desired_precision
+
+
+def Sinkhorn_step(density_matrix, current_scalings, target_marginals):
+  left_scaling = current_scalings[0]
+  right_scaling = current_scalings[1]
+
+  left_target = target_marginals[0]
+  right_target = target_marginals[1]
+
+  left_dimension = np.shape(left_target)[0]
+  right_dimension = np.shape(right_target)[0]
+
+  #fix right marginal
+  marginal = trace_out_left(np.kron(left_scaling, np.eye(right_dimension)) @ density_matrix, left_dimension, right_dimension)
+  right_tri_scaling = np.diag(np.sqrt(right_target))@ np.linalg.inv(scipy.linalg.cholesky(marginal, lower=True))
+  right_scaling =  right_tri_scaling.T @ right_tri_scaling
+
+  #fix left marginal
+  marginal = trace_out_right(np.kron(np.eye(left_dimension), right_scaling) @ density_matrix, left_dimension, right_dimension)
+  left_tri_scaling = np.diag(np.sqrt(left_target))@ np.linalg.inv(scipy.linalg.cholesky(marginal, lower=True))
+
+  left_scaling =  left_tri_scaling.T @ left_tri_scaling
+
+  #compute distance 
+
+  tri_kron = np.kron(left_tri_scaling, right_tri_scaling)
+  scaled_density_matrix = tri_kron @ density_matrix @ tri_kron.T
+  error = 0
+  error = error + np.linalg.norm(trace_out_right(scaled_density_matrix, left_dimension, right_dimension) - np.diag(left_target), 2)**2
+  error = error + np.linalg.norm(trace_out_left(scaled_density_matrix, left_dimension, right_dimension) - np.diag(right_target), 2)**2
+
+
+  return [left_scaling, right_scaling],error
+
+#computes the dual objective of the thing
+
+def dual_objective(density_matrix,current_scalings,target_marginals):
+
+    left_scaling = current_scalings[0]
+    right_scaling = current_scalings[1]
+
+    left_target = target_marginals[0]
+    right_target = target_marginals[1]
+
+    left_dim = np.shape(left_target)[0]
+    right_dim = np.shape(right_target)[0]
+
+    #BorelObjective(X,b1,b2,P,Q,m,n):
+    A = left_scaling.T @ left_scaling
+    B = right_scaling.T @ right_scaling
+
+    tra = np.trace(density_matrix @ np.kron(A,B))
+
+    char1 = sum(left_target[i]*np.log(left_scaling[i,i]**2) for i in range(left_dim))
+    char2 = sum(right_target[i]*np.log(right_scaling[i,i]**2) for i in range(right_dim))
+    return tra - char1 - char2
+
+
+#partial trace code
+
+def trace_out_left(density_matrix, left_dimension, right_dimension):
+      density_matrix = density_matrix.reshape([left_dimension, right_dimension, left_dimension, right_dimension])
+      marginal = sum(density_matrix[i,:,i,:] for i in range(left_dimension))
+      return marginal
+
+def trace_out_right(density_matrix, left_dimension, right_dimension):
+    density_matrix = density_matrix.reshape([left_dimension, right_dimension, left_dimension, right_dimension])
+    marginal = sum(density_matrix[:,i,:,i] for i in range(right_dimension))
+    return marginal
+
+def random_spectrum(dim):
+  spec = np.random.randn(dim)
+  spec = spec*spec
+  spec = spec/sum(spec)
+  spec.sort()
+  return np.flip(spec)
+
+
+#### 
+
+
 
 
